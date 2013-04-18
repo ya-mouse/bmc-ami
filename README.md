@@ -23,3 +23,19 @@ Entry Point:  00000000
 
 To re-create u-Boot image (for SuperH arch use "sh"):
 $ mkimage -A sh -O linux -T ramdisk -C none -d ROOT-new.cramfs ROOT-new.bin
+
+Manage the MTD image
+====================
+1. Expand extracted CONF.bin to the minimal erase block count (8 by 64k, maximum is around 1.5M):
+$ s=$(stat -c "%s" CONF.bin); dd if=/dev/zero of=CONF.bin seek=$s bs=1 count=$((0x80000 - $s))
+2. Associate /dev/loopX with CONF.bin via losetup:
+$ losetup /dev/loop0 CONF.bin
+3. Associate /dev/loopX with MTD char device (erase size is 64k):
+$ modprobe block2mtd block2mtd=/dev/loop0,0x10000
+4. Insmod MTDBLOCK module to mount image
+$ modprobe mtdblock
+$ mount -tjffs2 /dev/mtdblock0 MOUNT_POINT
+5. Modify content on your own
+6. Flush modules & deassociate loop-back device
+$ rmmod mtdblock; rmmod block2mtd
+$ losetup -d /dev/loop0
