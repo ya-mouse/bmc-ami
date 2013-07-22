@@ -18,6 +18,8 @@ static unsigned char FirmwareInfo[64*1024];
 static UINT32 Location;	/* Flash Location Value */
 static INT32 BlockSize;	/* Size of each Flash Block */
 
+static int summary = 0;
+
 static void update_name(MODULE_INFO *mod, char *name)
 {
 	char *p = name;
@@ -37,6 +39,12 @@ static void dump_fmh(FMH *fmh, MODULE_INFO *mod, char *name, FILE *out)
 	int comp = 0;
 
 //	printf("*** %s ***\n", name);
+
+	if (summary) {
+		fprintf(out, "%-16s\t%d.%d\t0x%04x\n",
+			name, mod->Module_Ver_Major, mod->Module_Ver_Minor, mod->Module_Type);
+		return;
+	}
 
 	fprintf(out, "[%s]\n", name);
 
@@ -192,6 +200,8 @@ dump_fwinfo(char *fwinfo, FILE *out)
 		if (value == NULL)
 			continue;
 		printf("%s=\"%s\"\n", key, value);
+		if (summary)
+			continue;
 
 		if (!strcmp(key, "FW_VERSION")) {
 			int mj, mn, no;
@@ -218,6 +228,8 @@ Usage(char *Prog, int status)
 	printf("\t -i Input Firmware File\n");
 	printf("\t -o Output Firmware Path\n");
 	printf("\t -b Block Size (in kB, default 64)\n");
+	printf("\t -s Summary\n");
+	printf("\t -f Offset to the FMH header\n");
 	printf("\n");
 	exit(status);
 }
@@ -226,6 +238,7 @@ int
 main(int argc, char *argv[])
 {
 	int opt;
+	long fmh_offset = 0;
 
 	/* Global Information */	
 	char *OutDir;			/* Location of Output Files */
@@ -251,7 +264,7 @@ main(int argc, char *argv[])
 	ini_name[0] = '\0';
 	BlockSize = 0;
 
-	while ((opt = getopt(argc, argv, "i:o:b:h")) != -1)
+	while ((opt = getopt(argc, argv, "i:o:b:f:hs")) != -1)
 	{
 		 switch (opt)
 		 {
@@ -264,21 +277,30 @@ main(int argc, char *argv[])
 			case 'b':
 				BlockSize = atoi(optarg)*0x1000;
 				break;
+			case 'f':
+				fmh_offset = strtol(optarg, NULL, 16);
+				break;
+			case 's':
+				summary = 1;
+				break;
 			default:
 				Usage("dumpimage", opt != 'h');
 				break;
 		}
 	}
 
-	if (fw_file == NULL || OutDir == NULL)
+	if (fw_file == NULL || (OutDir == NULL && !summary))
 		Usage("dumpimage", 2);
 
-	snprintf(ini_name, 256, "%s/genimage.ini", OutDir);
-
-	if (mkdir(OutDir, 0755) < 0)
+	if (!summary)
 	{
-		perror("Error: Unable to create directory");
-		return 3;
+		snprintf(ini_name, 256, "%s/genimage.ini", OutDir);
+
+		if (mkdir(OutDir, 0755) < 0)
+		{
+			perror("Error: Unable to create directory");
+			return 3;
+		}
 	}
 
 	if (BlockSize == 0)
@@ -297,10 +319,19 @@ main(int argc, char *argv[])
 		return 3;
 	}
 
-	if (fseek(Infd, -BlockSize, SEEK_END) < 0)
+	if (fmh_offset == 0)
 	{
-		printf("Error: Seek to end of firmware file %s failed\n", fw_file);
-		return 3;
+		if (fseek(Infd, -BlockSize, SEEK_END) < 0)
+		{
+			printf("Error: Seek to the end of firmware file %s failed\n", fw_file);
+			return 3;
+		}
+	} else {
+		if (fseek(Infd, fmh_offset, SEEK_SET) < 0)
+		{
+			printf("Error: Seek to the specified FMH offset in %s failed\n", fw_file);
+			return 3;
+		}
 	}
 
 	if (fread(FirmwareInfo, BlockSize, 1, Infd) != 1) {
@@ -315,11 +346,18 @@ main(int argc, char *argv[])
 		return 3;
 	}
 
-	Outfd = fopen(ini_name, "w+");
-	if (Outfd == NULL)
+	if (!summary)
 	{
-		printf("Error: Unable to open output file %s\n", ini_name);
-		return 3;
+		Outfd = fopen(ini_name, "w+");
+		if (Outfd == NULL)
+		{
+			printf("Error: Unable to open output file %s\n", ini_name);
+			return 3;
+		}
+	}
+	else
+	{
+		Outfd = stdout;
 	}
 
 	mod = &(fmh->Module_Info);
@@ -327,12 +365,18 @@ main(int argc, char *argv[])
 
 	Location = fmh->FMH_Location;
 
-	fprintf(Outfd, "[GLOBAL]\n\tOutput  \t= %s\n\tFlashSize \t= %dM\n\tBlockSize\t= %dK\n",
-		basename(fw_file), stat.st_size / 0x100000, BlockSize / 1024);
+	if (!summary)
+	{
+		fprintf(Outfd, "[GLOBAL]\n\tOutput  \t= %s\n\tFlashSize \t= %dM\n\tBlockSize\t= %dK\n",
+			basename(fw_file), stat.st_size / 0x100000, BlockSize / 1024);
+	}
 
 	dump_fwinfo((char *)FirmwareInfo+0x40, Outfd);
-	fputs("\n", Outfd);
 
+	if (!summary)
+		fputs("\n", Outfd);
+	else
+		fprintf(Outfd, "--------------------------------------\n");
 	dump_fmh(fmh, mod, ModuleName, Outfd);
 
 #if 0
@@ -361,14 +405,16 @@ main(int argc, char *argv[])
 		update_name(mod, ModuleName);
 
 		dump_fmh(fmh, mod, ModuleName, Outfd);
-		dump_module(fmh, mod, ModuleName, Infd, OutDir);
+		if (!summary)
+			dump_module(fmh, mod, ModuleName, Infd, OutDir);
 
 		fseek(Infd, fmh->FMH_AllocatedSize - BlockSize, SEEK_CUR);
 	}
 
 	fclose(Infd);
 
-	fclose(Outfd);
+	if (!summary)
+		fclose(Outfd);
 
 	return 0;
 }
