@@ -46,8 +46,9 @@ Manage the MTD image
 ```$ mount -tjffs2 /dev/mtdblock0 MOUNT_POINT```
 5. Modify content on your own
 6. Re-create MTD image:
+ 
 ``` mkfs.jffs2 -c 12 -l -f -s 0x800 -q -x lzo  --pad=0x00170000 -e 0x10000 -r MOUNT_POINT -o CONF-NEW.bin```
-6. Remove modules & deassociate loop-back device
+7. Remove modules & deassociate loop-back device
 ```sh
 $ rmmod mtdblock; rmmod block2mtd
 $ losetup -d /dev/loop0
