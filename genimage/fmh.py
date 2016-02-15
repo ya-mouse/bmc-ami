@@ -287,7 +287,7 @@ def dump_image(cfg, fwimgname):
         idx = np.where(image[offset:offset+block_size].view(dtype=np.uint8) == 0xff)
         if not len(idx[0]):
             return
-        desc = image[offset:offset+(idx[0][0] >> 2)].tostring()
+        desc = image.view(dtype=np.uint8)[offset << 2:(offset << 2)+idx[0][0]].tostring()
         for s in desc.split('\n'):
             try:
                 k,v = s.split('=')
@@ -298,9 +298,12 @@ def dump_image(cfg, fwimgname):
                 continue
             if k == 'FW_VERSION':
                 try:
-                    mj, mn, no = v.split('.')
+                    mj, mn, no, _ = v.split('.')
                 except ValueError:
-                    continue
+                    try:
+                        mj, mn, no = v.split('.')
+                    except ValueError:
+                        continue
                 cfg.set(modname, 'BuildNo', no)
             elif k == 'FW_PRODUCTID':
                 cfg.set(modname, 'ProductId', v)
